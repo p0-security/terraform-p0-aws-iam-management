@@ -1,0 +1,97 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Resource": "arn:aws:iam::*:role/OrganizationAccountAccessRole"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "iam:CreateRole",
+                "iam:PutRolePolicy",
+                "iam:GetRole",
+                "iam:DeleteRole",
+                "iam:GetRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:ListRolePolicies",
+                "iam:TagRole",
+                "iam:UntagRole",
+                "iam:ListRoleTags",
+                "iam:CreatePolicy",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy",
+                "iam:ListAttachedRolePolicies",
+                "iam:ListInstanceProfilesForRole",
+                "lambda:CreateFunction",
+                "lambda:GetFunction",
+                "lambda:DeleteFunction",
+                "lambda:UpdateFunctionCode",
+                "lambda:UpdateFunctionConfiguration",
+                "lambda:InvokeFunction",
+                "lambda:AddPermission",
+                "lambda:RemovePermission",
+                "lambda:GetPolicy",
+                "lambda:ListVersionsByFunction",
+                "lambda:GetFunctionCodeSigningConfig",
+                "lambda:ListProvisionedConcurrencyConfigs",
+                "lambda:GetFunction",
+                "lambda:ListAliases",
+                "lambda:GetAlias",
+                "sts:AssumeRole",
+                "organizations:CreatePolicy",
+                "organizations:DeletePolicy",
+                "organizations:DescribePolicy",
+                "organizations:ListPolicies",
+                "organizations:UpdatePolicy",
+                "organizations:AttachPolicy",
+                "organizations:DetachPolicy",
+                "organizations:ListTagsForResource",
+                "organizations:TagResource",
+                "organizations:UntagResource",
+                "resource-explorer-2:CreateIndex",
+                "resource-explorer-2:GetIndex",
+                "resource-explorer-2:ListIndexes",
+                "resource-explorer-2:UpdateIndexType",
+                "resource-explorer-2:CreateView",
+                "resource-explorer-2:GetView",
+                "resource-explorer-2:ListViews",
+                "resource-explorer-2:AssociateDefaultView",
+                "resource-explorer-2:GetDefaultView",
+                "account:ListRegions"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "arn:aws:logs:*:*:*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws:iam::*:role/*",
+            "Condition": {
+                "StringLike": {
+                    "iam:PassedToService": "lambda.amazonaws.com"
+                }
+            }
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "iam:CreateRole",
+                "iam:PutRolePolicy",
+                "iam:DeleteRole",
+                "iam:DeleteRolePolicy",
+                "iam:TagRole"
+            ],
+            "Resource": "arn:aws:iam::*:role/P0RoleIamResourceLister"
+        }
+    ]
+}
