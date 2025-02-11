@@ -176,9 +176,7 @@
     {
       "Sid": "P0CanNotCreateSshUserProvisioningDocument",
       "Effect": "Deny",
-      "Action": [
-        "ssm:CreateDocument"
-      ],
+      "Action": "ssm:CreateDocument",
       "Resource": "arn:aws:ssm:*:${account_id}:document/P0ProvisionUserAccess"
     },
     {
