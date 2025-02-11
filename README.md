@@ -114,7 +114,7 @@ terraform init
 terraform plan -target=aws_iam_role.lambda_role -target=aws_iam_role_policy.lambda_role_policy -target=aws_lambda_function.create_member_roles -target=null_resource.discover
 ```
 
-2. Apply Lambda and discovery resources:
+2. Apply Lambda and discover accounts:
 ```bash
 terraform apply -target=aws_iam_role.lambda_role -target=aws_iam_role_policy.lambda_role_policy -target=aws_lambda_function.create_member_roles -target=null_resource.discover
 ```
