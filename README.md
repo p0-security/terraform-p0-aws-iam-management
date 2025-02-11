@@ -1,6 +1,6 @@
-# AWS IAM Role Manager
+# AWS IAM and P0 Security Integration Manager
 
-This Terraform project sets up IAM roles to use with P0 Security (via Google federation) across root and member accounts of an AWS Organization.
+This Terraform project sets up IAM roles across AWS Organizations and configures P0 Security integration for both root and member accounts automatically.
 
 ## Prerequisites
 
@@ -20,19 +20,36 @@ This Terraform project sets up IAM roles to use with P0 Security (via Google fed
             --policy-document file://iam/terraform-execution-role-policy.json
         ```
 
-2. AWS Organization with:
+2. **AWS Organization Requirements**:
    - Root (management) account
    - One or more member accounts
    - OrganizationAccountAccessRole available in member accounts
+   - AWS Organizations API access enabled
 
-3. AWS Identity Center (formerly SSO) configured with Google federation
+3. **P0 Security Requirements**:
+   - P0 API Token (create at p0.app)
+   - P0 Organization name
+
+4. **Local Environment**:
+   - AWS CLI configured
+   - jq installed (for JSON processing)
+   - Terraform installed
+
+## Environment Variables
+
+```bash
+P0_API_TOKEN
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+AWS_SESSION_TOKEN
+```
 
 ## IAM Roles Overview
 
 ### Prerequisites Roles
 1. **TerraformExecutionRole** (in root account)
    - Used by: Terraform
-   - Purpose: Creates initial resources and Lambda function
+   - Purpose: Creates initial resources, Lambda function, and P0 configurations
    - Key Permissions:
      - IAM role and policy management
      - Lambda function management
@@ -63,72 +80,96 @@ This Terraform project sets up IAM roles to use with P0 Security (via Google fed
 project_root/
 ├── main.tf                           # Main Terraform config
 ├── variables.tf                      # Variable definitions
-├── provider.tf                       # AWS provider configuration
+├── provider.tf                       # AWS and P0 provider configuration
 ├── terraform.tfvars                  # Your variable values
 ├── iam/
 │   ├── terraform-execution-role.json       # Trust policy for TerraformExecutionRole
 │   └── terraform-execution-role-policy.json # Permission policy for TerraformExecutionRole
 ├── policies/
-│   └── p0_role_policy.json          # Policy template
+    └── p0_role_policy.json          # Policy template for P0 role
+```
+
+## Configuration
+
+1. Create `terraform.tfvars`:
+```hcl
+root_account_id = "123456789012"      # Your root AWS account ID
+member_accounts = []                   # Leave empty for auto-discovery
+google_audience_id = "your_audience_id"  # From P0 Security console
+```
+
+2. Configure `provider.tf`:
+```hcl
+provider "p0" {
+  org  = "your-org-name"     # Your P0 organization name
+  host = "https://api.p0.app" 
+}
 ```
 
 ## Steps
 
-1. Edit the file terraform.tfvars in the root folder as follows:
-    1. Add your root account as a string value
-    2. Add your children/member accounts in an array of comma separated strings
-    3. Add the P0 Security Google Audience ID
+1. Initialize and plan:
+```bash
+terraform init
+terraform plan -target=aws_iam_role.lambda_role -target=aws_iam_role_policy.lambda_role_policy -target=aws_lambda_function.create_member_roles -target=null_resource.discover
+```
 
-2. In the root folder, run the following commands:
-    ```bash
-    terraform init
-    terraform plan
-    terraform apply
-    ```
+2. Apply Lambda and discovery resources:
+```bash
+terraform apply -target=aws_iam_role.lambda_role -target=aws_iam_role_policy.lambda_role_policy -target=aws_lambda_function.create_member_roles -target=null_resource.discover
+```
+
+3. Apply P0 configuration:
+```bash
+terraform apply
+```
 
 ## Tasks Performed
 
-1. In the Root/Management Account:
-   - Created by TerraformExecutionRole:
-     - P0RoleIamManager role with Google federation
-     - P0RoleIamManagerPolicy (inline policy) attached to P0RoleIamManager
-     - role-creation-lambda-role for the Lambda function
-     - role-creation-policy (inline policy) for Lambda role
-     - Lambda function called create-member-account-roles
+1. In the Root Account:
+   - Creates P0RoleIamManager with Google federation for P0 Security
+   - Sets up Lambda function for account discovery
+   - Configures P0 Security integration
 
-2. In Each Child Account:
-   - Created by Lambda (which assumes OrganizationAccountAccessRole):
-     - P0RoleIamManager role with same Google federation
-     - P0RoleIamManagerPolicy (inline policy) attached to P0RoleIamManager
+2. In Member Accounts (via Lambda):
+   - Creates P0RoleIamManager with Google federation for P0 Security
+   - Applies consistent IAM policies
+
+3. In P0 Security:
+   - Configures AWS IAM integrations for all accounts
+   - Sets up proper parent-child relationships for Identity Center
+
 
 ## Workflow
 
 1. Initial Setup:
    ```
-   Your AWS Identity → TerraformExecutionRole
+   Your AWS Identity → TerraformExecutionRole → Create Initial Resources
    ```
-   - Terraform uses your provided TerraformExecutionRole to create resources in root account
 
-2. Lambda Creation:
-   - Terraform creates a zip package containing:
-     - Lambda function code (index.js)
-     - Policy template (p0_role_policy.json)
-   - Package is uploaded to AWS Lambda
-
-3. Member Account Role Creation:
+2. Account Discovery:
    ```
-   Lambda → OrganizationAccountAccessRole → Create P0RoleIamManager
+   Lambda → AWS Organizations API → Discover Member Accounts
    ```
-   - Lambda function iterates through member accounts
-   - For each account:
-     - Assumes the OrganizationAccountAccessRole
-     - Creates P0RoleIamManager with Google federation
-     - Reads policy template from package
-     - Replaces ${account_id} placeholder with current account ID
-     - Attaches policy to the role
 
-4. Final Trust Chain:
+3. Role Creation:
+   ```
+   Lambda → OrganizationAccountAccessRole → Create P0RoleIamManager in Each Account
+   ```
+
+4. P0 Configuration:
+   ```
+   Terraform → P0 API → Configure AWS Integration for All Accounts
+   ```
+
+5. Final Trust Chain:
    ```
    Google Federation (P0 Security) → P0RoleIamManager (in any account)
    ```
-   - End users can assume P0RoleIamManager in any account through P0 Security
+
+## Notes
+
+- The Lambda function will automatically discover all active accounts in your organization
+- P0 configuration will be applied to all discovered accounts
+- The root account is always configured as the parent for all member accounts
+- Role propagation may take a few minutes after creation

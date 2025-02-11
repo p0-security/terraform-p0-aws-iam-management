@@ -1,3 +1,11 @@
+# Initialize account tracking file
+resource "local_file" "account_tracker" {
+  filename = "${path.module}/discovered_accounts.json"
+  content  = jsonencode({
+    accounts = [var.root_account_id]
+  })
+}
+
 # Create the P0RoleIamManager role in the root account
 resource "aws_iam_role" "root_role" {
   provider = aws.root
@@ -66,6 +74,10 @@ resource "aws_iam_role_policy" "lambda_role_policy" {
         Action = [
           "sts:AssumeRole",
           "organizations:ListAccounts",
+          "organizations:DescribeOrganization", 
+          "organizations:ListRoots",            
+          "organizations:ListOrganizationalUnitsForParent", 
+          "organizations:ListChildren",       
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents",
@@ -162,24 +174,47 @@ const fs = require('fs');
 const path = require('path');
 
 async function getOrganizationAccounts() {
-  const orgClient = new OrganizationsClient({ region: 'us-east-1' });
-  const accounts = [];
-  let nextToken;
-
-  do {
-    const command = new ListAccountsCommand({ NextToken: nextToken });
-    const response = await orgClient.send(command);
+  console.log('Starting getOrganizationAccounts function');
+  try {
+    const orgClient = new OrganizationsClient({ 
+      region: 'us-east-1',
+      logger: console  // Add logging
+    });
+    console.log('Created OrganizationsClient');
     
-    // Filter only ACTIVE accounts and exclude root account
-    const activeAccounts = response.Accounts
-      .filter(account => account.Status === 'ACTIVE' && account.Id !== process.env.ROOT_ACCOUNT_ID)
-      .map(account => account.Id);
-    
-    accounts.push(...activeAccounts);
-    nextToken = response.NextToken;
-  } while (nextToken);
+    const accounts = [];
+    let nextToken;
 
-  return accounts;
+    do {
+      console.log('Sending ListAccountsCommand...');
+      const command = new ListAccountsCommand({ NextToken: nextToken });
+      console.log('Command created:', JSON.stringify(command));
+      
+      try {
+        const response = await orgClient.send(command);
+        console.log('Received response:', JSON.stringify(response));
+        
+        // Filter only ACTIVE accounts and exclude root account
+        const activeAccounts = response.Accounts
+          .filter(account => account.Status === 'ACTIVE' && account.Id !== process.env.ROOT_ACCOUNT_ID)
+          .map(account => account.Id);
+        
+        accounts.push(...activeAccounts);
+        nextToken = response.NextToken;
+      } catch (sendError) {
+        console.error('Error sending command:', sendError);
+        console.error('Error details:', JSON.stringify(sendError, null, 2));
+        throw sendError;
+      }
+    } while (nextToken);
+
+    console.log('Final accounts list:', accounts);
+    return accounts;
+  } catch (error) {
+    console.error('Error in getOrganizationAccounts:', error);
+    console.error('Stack trace:', error.stack);
+    throw error;
+  }
 }
 
 async function cleanupAccount(accountId) {
@@ -433,6 +468,63 @@ resource "aws_lambda_function" "create_member_roles" {
   }
 }
 
+# Account discovery process
+resource "null_resource" "discover" {
+  depends_on = [aws_lambda_function.create_member_roles]
+
+  triggers = {
+    always_run = timestamp()
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOF
+      aws lambda invoke \
+        --function-name ${aws_lambda_function.create_member_roles.function_name} \
+        --region us-east-1 \
+        --cli-binary-format raw-in-base64-out \
+        response.json && \
+      echo '{"accounts":["${var.root_account_id}"]}' > ${local_file.account_tracker.filename} && \
+      cat response.json | jq -r '.body | fromjson | .details[] | select(.status == "success") | .accountId' | while read account; do
+        content=$(cat ${local_file.account_tracker.filename})
+        echo "$content" | jq --arg acc "$account" '.accounts += [$acc]' > ${local_file.account_tracker.filename}
+      done
+    EOF
+  }
+}
+
+
+
+# Read account list file
+data "local_file" "account_list" {
+  depends_on = [null_resource.discover]
+  filename = local_file.account_tracker.filename
+}
+
+# Read existing accounts file if it exists, otherwise use root account
+locals {
+  existing_accounts = fileexists("${path.module}/discovered_accounts.json") ? jsondecode(file("${path.module}/discovered_accounts.json")).accounts : [var.root_account_id]
+}
+
+# P0 Configuration for all accounts
+resource "p0_aws_iam_write_staged" "aws_staged" {
+  for_each = toset(local.existing_accounts)
+  id       = each.key
+  
+  depends_on = [null_resource.discover]
+}
+
+resource "p0_aws_iam_write" "aws_install" {
+  for_each = toset(local.existing_accounts)
+  
+  depends_on = [p0_aws_iam_write_staged.aws_staged]
+  id        = p0_aws_iam_write_staged.aws_staged[each.key].id
+  
+  login = {
+    type   = "idc"
+    parent = var.root_account_id
+  }
+}
+
 # Pre-destroy cleanup
 resource "null_resource" "pre_destroy_cleanup" {
   depends_on = [aws_lambda_function.create_member_roles]
@@ -459,22 +551,6 @@ resource "null_resource" "pre_destroy_cleanup" {
   }
 }
 
-# Create roles
-resource "null_resource" "trigger_lambda" {
-  depends_on = [aws_lambda_function.create_member_roles]
-
-  provisioner "local-exec" {
-    command = <<EOF
-aws lambda invoke \
-  --function-name ${aws_lambda_function.create_member_roles.function_name} \
-  --region us-east-1 \
-  --log-type Tail \
-  --query 'LogResult' \
-  --output text response.json | base64 -d
-EOF
-  }
-}
-
 # Outputs
 output "root_role_arn" {
   value       = aws_iam_role.root_role.arn
@@ -484,4 +560,17 @@ output "root_role_arn" {
 output "lambda_function_arn" {
   value       = aws_lambda_function.create_member_roles.arn
   description = "ARN of the Lambda function that creates roles in member accounts"
+}
+
+output "discovered_accounts" {
+  value = local.existing_accounts
+  description = "All discovered AWS accounts"
+}
+
+output "p0_staged_ids" {
+  value = {
+    for account_id in local.existing_accounts : 
+    account_id => p0_aws_iam_write_staged.aws_staged[account_id].id
+  }
+  description = "P0 staged configuration IDs for all accounts"
 }
